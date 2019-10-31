@@ -1,0 +1,206 @@
+#!/bin/bash
+# Copyright (c) 2019 ServusCarolus (Charles P. Schaum)
+#
+#-----------------------------------
+# Some functions are defined here.
+
+# Default console output help / error message
+message () {
+    echo ""
+    echo "Change or reset some camera settings for the Logitech c922 webcam."
+    echo ""
+    echo "syntax forms:"
+    echo ""
+    echo "c922 <mod|default> <0-9|device-name>"
+    echo ""
+    echo "Examples:"
+    echo ""
+    echo "c922                      show help"
+    echo "c922 mod                  modify settings of /dev/video0"
+    echo "c922 default              reset  settings of /dev/video0"
+    echo "c922 mod     1            modify settings of /dev/video1"
+    echo "c922 default 1            reset  settings of /dev/video1"
+    echo "c922 mod     /dev/video2  modify settings of /dev/video2"
+    echo "c922 default /dev/video2  reset  settings of /dev/video2"
+    echo ""
+}
+
+####################
+#
+# Here are the Logitech c922 defaults:
+#
+#                     brightness 0x00980900 (int)    : min=0 max=255 step=1 default=128 value=128
+#                       contrast 0x00980901 (int)    : min=0 max=255 step=1 default=128 value=128
+#                     saturation 0x00980902 (int)    : min=0 max=255 step=1 default=128 value=128
+# white_balance_temperature_auto 0x0098090c (bool)   : default=1 value=1
+#                           gain 0x00980913 (int)    : min=0 max=255 step=1 default=0 value=0
+#           power_line_frequency 0x00980918 (menu)   : min=0 max=2 default=2 value=2
+#				0: Disabled
+#				1: 50 Hz
+#				2: 60 Hz
+#      white_balance_temperature 0x0098091a (int)    : min=2000 max=6500 step=1 default=4000 value=4000 flags=inactive
+#                      sharpness 0x0098091b (int)    : min=0 max=255 step=1 default=128 value=128
+#         backlight_compensation 0x0098091c (int)    : min=0 max=1 step=1 default=0 value=0
+#                  exposure_auto 0x009a0901 (menu)   : min=0 max=3 default=3 value=3
+#				1: Manual Mode
+#				3: Aperture Priority Mode
+#              exposure_absolute 0x009a0902 (int)    : min=3 max=2047 step=1 default=250 value=250 flags=inactive
+#         exposure_auto_priority 0x009a0903 (bool)   : default=0 value=0
+#                   pan_absolute 0x009a0908 (int)    : min=-36000 max=36000 step=3600 default=0 value=0
+#                  tilt_absolute 0x009a0909 (int)    : min=-36000 max=36000 step=3600 default=0 value=0
+#                 focus_absolute 0x009a090a (int)    : min=0 max=250 step=5 default=0 value=0 flags=inactive
+#                     focus_auto 0x009a090c (bool)   : default=1 value=1
+#                  zoom_absolute 0x009a090d (int)    : min=100 max=500 step=1 default=100 value=100
+
+####################
+#
+# Parse arguments.
+# The first argument must be "default" or "mod",
+# Otherwise the help screen will display. 
+
+default='default'
+mod='mod'
+help='help'
+device='0'
+if [ -z "$1" ]
+then
+    action=$help
+else
+    if [ "$1" == "$default" ]; then action=$default
+    elif [ "$1" == "$mod" ]; then action=$mod
+    else
+	echo "The first argument must be 'default' or 'mod'."
+	echo "Let's try giving more info instead."
+	echo ""
+	action=$help
+    fi
+fi
+
+####################
+#
+# If a device argument is provided, use that. The argument can be of the form
+# /dev/video0, /dev/video1, etc., or just 0, 1, and so on. The command
+# v4l2-ctl uses /dev/video0 by default.
+#
+if [ -n "$2" ]; then device=$2; fi
+
+####################
+#
+# Check if the v4l2-ctl program exists.
+# If it does, display what will be done.
+# Otherwise advide the user to install it.
+
+if [ -e "/usr/bin/v4l2-ctl" ]
+then
+    pass='pass'
+elif [ -e "/usr/local/bin/v4l2-ctl" ]
+then
+    pass='pass'
+else
+    pass=
+fi
+
+if [ $pass ]
+then
+    echo "Proceeding:"
+    echo "Video device used:" $device
+    echo "Action:" $action
+else
+    echo "Please install the 'v4l2-ctl' program to proceed."
+    message
+    exit 1
+fi
+
+####################
+#
+# Do the modifications
+
+if [ "$action" == "$mod" ]
+then
+# Even though the range of "exposure_auto" is 0 to 3, 1 disables auto exposure,
+# while 3 enables it. So we disable auto exposure.
+#
+    v4l2-ctl -d $device --set-ctrl=exposure_auto=1
+#
+# Here we ensure the default "exposure_auto_priority=0" because some apps like
+# to change this value to 1.
+#
+    v4l2-ctl -d $device --set-ctrl=exposure_auto_priority=0
+#
+# You want to keep the exposure (think shutter and aperature) low; the default
+# is 250. You don't want to go too much lower because too much gain will add
+# image noise. You don't want to go too much higher because that slows frame
+# rate, thereby increasing lag.
+#
+    v4l2-ctl -d $device --set-ctrl=exposure_absolute=250
+#
+# This is like camera ISO. To get the best frame rate, you increase the gain.
+#
+    v4l2-ctl -d $device --set-ctrl=gain=50
+#
+# Here we turn off auto WB because it often produces a "zombie" look with
+# these settings, especially under fluorescent light.
+#
+    v4l2-ctl -d $device --set-ctrl=white_balance_temperature_auto=0
+#
+# And we change from the default WB to a lower value of 3200
+#
+    v4l2-ctl -d $device --set-ctrl=white_balance_temperature=3200
+#
+# Finally we turn off autofocus to increase frame rate.
+#
+    v4l2-ctl -d $device --set-ctrl=focus_auto=0
+#
+# Done with changes.
+#
+elif [ "$action" == "$default" ]
+then
+#
+# First set these values to manual to avoid I/O errors.
+#
+    v4l2-ctl -d $device --set-ctrl=white_balance_temperature_auto=0
+    v4l2-ctl -d $device --set-ctrl=exposure_auto=1
+    v4l2-ctl -d $device --set-ctrl=focus_auto=0
+#
+# Next set the defaults and set everything back to auto.
+#
+    v4l2-ctl -d $device --set-ctrl=white_balance_temperature=4000
+    v4l2-ctl -d $device --set-ctrl=exposure_absolute=250
+    v4l2-ctl -d $device --set-ctrl=focus_absolute=0
+    v4l2-ctl -d $device --set-ctrl=white_balance_temperature_auto=1
+    v4l2-ctl -d $device --set-ctrl=exposure_auto=3
+    v4l2-ctl -d $device --set-ctrl=exposure_auto_priority=0
+    v4l2-ctl -d $device --set-ctrl=focus_auto=1
+#
+# Now set the remaining defaults.
+#
+    v4l2-ctl -d $device --set-ctrl=brightness=128
+    v4l2-ctl -d $device --set-ctrl=contrast=128
+    v4l2-ctl -d $device --set-ctrl=saturation=128
+    v4l2-ctl -d $device --set-ctrl=gain=0
+    v4l2-ctl -d $device --set-ctrl=sharpness=128
+    v4l2-ctl -d $device --set-ctrl=backlight_compensation=0
+    v4l2-ctl -d $device --set-ctrl=pan_absolute=0
+    v4l2-ctl -d $device --set-ctrl=tilt_absolute=0
+    v4l2-ctl -d $device --set-ctrl=zoom_absolute=100
+#
+# Change this to 1 below if you have AC at 50Hz.
+#
+    v4l2-ctl -d $device --set-ctrl=power_line_frequency=2
+#
+# Done with defaults.
+#
+elif [ "$action" == "$help" ]
+then
+#
+# Show help and info by default.
+#
+    message
+    v4l2-ctl --all
+#
+# Done with help.
+#
+else
+    echo "Abnormal script termination"
+    exit 1
+fi
